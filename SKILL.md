@@ -64,7 +64,7 @@ python ~/.workbuddy/skills/imi-csv-diy/scripts/split_csv_to_xlsx.py <case> <r1_s
 
 - 每个轨迹创建 1 个 `vtkMRMLMarkupsLineNode`
 - 2 个控制点：`AddControlPoint(entry)` → `AddControlPoint(target)`
-- **Glyph**：`Vertex2D`
+- **Glyph**：`slicer.vtkMRMLMarkupsDisplayNode.Vertex2D`
 - **颜色**：traj1=红 `[1,0,0]`、traj2=绿 `[0,1,0]`、traj3=蓝 `[0,0,1]`
 - **TextScale**：`0.0`
 - 锁定控制点和节点
@@ -74,13 +74,15 @@ python ~/.workbuddy/skills/imi-csv-diy/scripts/split_csv_to_xlsx.py <case> <r1_s
 
 ## 阶段 3：坐标计算与回填（IMI_transform_diy · 步骤 1）
 
-对 3 个 xlsx 分别运行 `compute_deposits.py`：
+对 3 个 xlsx 分别运行工作目录下的 `compute_deposits.py`（详见 `IMI_transform_diy` 技能）：
 
 ```bash
 python compute_deposits.py {case}_traj1.xlsx
 python compute_deposits.py {case}_traj2.xlsx
 python compute_deposits.py {case}_traj3.xlsx
 ```
+
+> **路径说明**：`compute_deposits.py` 是项目级脚本，存放于当前工作目录下。若不存在，需先由用户提供。
 
 每个 xlsx 的 deposits sheet R/A/S 行被回填为计算值。
 
@@ -102,8 +104,9 @@ python compute_deposits.py {case}_traj3.xlsx
 
 - **每个 traj 只创建 1 个 `vtkMRMLMarkupsFiducialNode`**（单个 Point List）
 - 所有 deposit 点通过 `AddFiducial(r, a, s)` + `SetNthFiducialLabel(i, label)` 添加
-- **Glyph**：`StarBurst`
+- **Glyph**：`slicer.vtkMRMLMarkupsDisplayNode.StarBurst`
 - **颜色**：同轨迹 Line（红/绿/蓝）
+- **Glyph Size**：绝对 3 mm（`UseGlyphScaleOff()` + `SetGlyphSize(3.0)`）
 - **TextScale**：`0.0`
 - 锁定节点 `SetLocked(True)`
 
@@ -127,10 +130,14 @@ for i, (label, r, a, s) in enumerate(deposits):
     except Exception as ex:
         print(f"FAIL d{i+1}: {ex}")
 
+color = [1.0, 0.0, 0.0]  # traj1=红 traj2=绿 traj3=蓝，按实际轨迹替换
+
 disp = fid.GetDisplayNode()
-disp.SetColor([R, G, B])
+disp.SetColor(color)
 disp.SetSelectedColor([min(x + 0.3, 1.0) for x in color])
 disp.SetGlyphType(slicer.vtkMRMLMarkupsDisplayNode.StarBurst)
+disp.UseGlyphScaleOff()
+disp.SetGlyphSize(3.0)
 disp.SetTextScale(0.0)
 fid.SetLocked(True)
 ```
@@ -167,8 +174,36 @@ slicer_import_{case}_traj3_deposits.md
 - 一键生成Slicer代码
 - imi_slicer
 
+## 关键执行规则
+
+### 批量写入限制
+
+**每批 Write 调用不超过 3-4 个文件。** 超过此数量会导致部分写入被静默丢弃。所有文件写完之后必须用 Glob 验证完整性。
+
+具体分批策略：
+- **阶段 2**（2 个文件）：`.py` 和 `.md` 一次写入即可
+- **阶段 4**（6 个文件）：分 2 批，每批 3 个（一个 traj 的 .py + .md 一对），或分 3 批每批 2 个
+
+### 输出验证
+
+所有文件写入完成后，用 Glob 验证文件列表（排除 CSV 输入）：
+
+```
+Glob: slicer_import_{case}*
+```
+
+预期 8 个文件 + 3 个 xlsx = 共 11 个。如数量不足，逐个补写缺失文件。
+
+### 阶段 3 并行优化
+
+3 个 `compute_deposits.py` 调用之间无依赖，可并行执行。使用 `run_in_background=true` 启动后两个，第一个前台运行以获得回填结果供阶段 4 使用。
+
+> **注意**：阶段 2（轨迹 Line 代码）直接从 CSV 读取，不依赖阶段 3 的结果。阶段 2 可与阶段 1+3 并行执行。
+
+---
+
 ## 依赖
 
 - Python 3.x + openpyxl
-- 项目脚本：`compute_deposits.py`
+- 项目脚本：工作目录下的 `compute_deposits.py`（IMI_transform_diy 所需，由用户提供）
 - 子技能脚本：`~/.workbuddy/skills/imi-csv-diy/scripts/split_csv_to_xlsx.py`
